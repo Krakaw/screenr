@@ -10,3 +10,4 @@ scrap = "0.5"
 repng = "0.2.2"
 chrono = "0.4.19"
 clap = { version = "3.0.14", features = ["derive"] }
+image = "0.24.0"
