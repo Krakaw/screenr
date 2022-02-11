@@ -1,0 +1,12 @@
+[package]
+name = "screenr"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+scrap = "0.5"
+repng = "0.2.2"
+chrono = "0.4.19"
+clap = { version = "3.0.14", features = ["derive"] }
