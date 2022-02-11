@@ -1,6 +1,9 @@
 extern crate repng;
 extern crate scrap;
+#[macro_use]
+extern crate log;
 use chrono::NaiveDate;
+use clap::{Parser, Subcommand};
 use image::{GenericImage, GenericImageView, ImageBuffer, Pixel, Primitive};
 use scrap::{Capturer, Display};
 use std::fs::File;
@@ -10,8 +13,6 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 use std::{fs, thread, time};
-
-use clap::Parser;
 
 /// Capture screenshots at regular intervals
 #[derive(Parser, Debug)]
@@ -34,51 +35,79 @@ struct Args {
     interval: u16,
 
     /// Generate video
-    #[clap(short, long)]
-    generate_video: Option<NaiveDate>,
+    #[clap(subcommand)]
+    output: Option<Generate>,
+
+    /// File prefix
+    #[clap(short, long, default_value = "screen")]
+    file_prefix: String,
+}
+#[derive(Subcommand, Debug)]
+enum Generate {
+    #[clap()]
+    Generate {
+        /// Day of images to process into video
+        /// Format: YYYY-MM-DD
+        #[clap(short, long)]
+        date: NaiveDate,
+    },
 }
 
 fn main() {
+    env_logger::init();
+
     let args = Args::parse();
     let output_dir = Path::new(&args.output_dir);
     let compress = !args.no_compression;
     let interval = args.interval;
     let single_image = !args.split_images;
+    let file_prefix = args.file_prefix;
 
-    if let Some(generate_video) = args.generate_video {
-        let _cmd = Command::new("ffmpeg")
-            .arg("-framerate")
-            .arg("2")
-            .arg("-pattern_type")
-            .arg("glob")
-            .arg("-i")
-            .arg(format!(
-                "{}/screen_{}*.png",
-                output_dir.to_string_lossy(),
-                generate_video.format("%Y%m%d")
-            ))
-            .arg("-c:v")
-            .arg("libx265")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
-            .arg(output_dir.join(format!("screen_{}.mp4", generate_video.format("%Y%m%d"))))
-            .output()
-            .expect("Failed to generate clip");
-        return;
+    if let Some(output) = &args.output {
+        match output {
+            Generate::Generate { date } => {
+                generate_mp4(date, output_dir, file_prefix);
+                return;
+            }
+        }
     }
 
     if interval == 0 {
-        capture_displays(output_dir, compress, single_image);
+        capture_displays(output_dir, compress, single_image, &file_prefix);
         return;
     }
+    debug!("Capturing images every {} seconds", interval);
     let delay = time::Duration::from_secs(interval as u64);
     loop {
-        capture_displays(output_dir, compress, single_image);
+        capture_displays(output_dir, compress, single_image, &file_prefix);
+        debug!("Sleeping for {} seconds", interval);
         sleep(delay);
     }
 }
 
-fn capture_displays(output_dir: &Path, compress: bool, single_image: bool) {
+fn generate_mp4(date: &NaiveDate, output_dir: &Path, file_prefix: String) {
+    let _cmd = Command::new("ffmpeg")
+        .arg("-framerate")
+        .arg("2")
+        .arg("-pattern_type")
+        .arg("glob")
+        .arg("-i")
+        .arg(format!(
+            "{}/screen_{}*.png",
+            output_dir.to_string_lossy(),
+            date.format("%Y%m%d")
+        ))
+        .arg("-c:v")
+        .arg("libx265")
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg(output_dir.join(format!("{}_{}.mp4", file_prefix, date.format("%Y%m%d"))))
+        .output()
+        .expect("Failed to generate clip");
+    trace!("{:?}", _cmd);
+}
+
+fn capture_displays(output_dir: &Path, compress: bool, single_image: bool, file_prefix: &str) {
     let one_second = Duration::new(1, 0);
     let one_frame = one_second / 60;
     let displays = Display::all().expect("Couldn't find primary display.");
@@ -115,8 +144,12 @@ fn capture_displays(output_dir: &Path, compress: bool, single_image: bool) {
             }
 
             // Save the image.
-            let filename =
-                output_dir.join(format!("screen_{}_{}.png", now.format("%Y%m%d_%H%M%S"), w));
+            let filename = output_dir.join(format!(
+                "{}_{}_{}.png",
+                file_prefix,
+                now.format("%Y%m%d_%H%M%S"),
+                w
+            ));
             image_filenames.push(filename.clone());
             repng::encode(
                 File::create(&filename).unwrap(),
@@ -127,23 +160,40 @@ fn capture_displays(output_dir: &Path, compress: bool, single_image: bool) {
             .unwrap();
 
             if compress && !single_image {
+                debug!(
+                    "Compressing individual image {}",
+                    filename.to_string_lossy()
+                );
                 compress_image(&filename);
             }
             break;
         }
     }
     if single_image {
+        debug!("Combining {} display images", image_filenames.len());
         let images = image_filenames
             .iter()
             .map(|i| image::open(i).unwrap())
             .collect::<Vec<_>>();
 
-        let merged_file = output_dir.join(format!("screen_{}.png", now.format("%Y%m%d_%H%M%S")));
+        let merged_file = output_dir.join(format!(
+            "{}_{}.png",
+            file_prefix,
+            now.format("%Y%m%d_%H%M%S")
+        ));
         h_concat(&images).save(&merged_file).unwrap();
         if compress {
+            debug!(
+                "Compressing combined image {}",
+                merged_file.to_string_lossy()
+            );
             compress_image(&merged_file);
         }
         for image in image_filenames {
+            debug!(
+                "Deleting individual display file {}",
+                image.to_string_lossy()
+            );
             fs::remove_file(image).expect("Failed to delete screen image");
         }
     }
@@ -155,11 +205,12 @@ fn compress_image(path: &PathBuf) {
         .arg("--skip-if-larger")
         .arg("--quality")
         .arg("40-60")
-        .arg(&format!("--output"))
+        .arg("--output")
         .arg(path.clone())
         .arg(path)
         .output()
         .expect("Failed to compress");
+    trace!("{:?}", _cmd);
 }
 
 /// Concatenate horizontally images with the same pixel type.
