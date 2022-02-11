@@ -17,20 +17,20 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Compress using pngquant
+    /// Do not compress using pngquant
     #[clap(short, long)]
-    compress: bool,
+    no_compression: bool,
 
-    /// Combine all screens into a single image
+    /// Split each image into its own file, do not combine
     #[clap(short, long)]
-    single_image: bool,
+    split_images: bool,
 
     /// Output directory
     #[clap(short, long, default_value = "./")]
     output_dir: String,
 
     /// Interval in seconds, 0 for once off
-    #[clap(short, long, default_value_t = 0)]
+    #[clap(short, long, default_value_t = 30)]
     interval: u16,
 
     /// Generate video
@@ -41,12 +41,11 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let output_dir = Path::new(&args.output_dir);
-    let compress = args.compress;
+    let compress = !args.no_compression;
     let interval = args.interval;
-    let single_image = args.single_image;
+    let single_image = !args.split_images;
 
     if let Some(generate_video) = args.generate_video {
-        eprintln!("video = {}", generate_video.format("%Y%m%d"));
         let _cmd = Command::new("ffmpeg")
             .arg("-framerate")
             .arg("2")
