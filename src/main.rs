@@ -16,8 +16,12 @@ use std::{fs, thread, time};
 
 /// Capture screenshots at regular intervals
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author = "Krakaw", version = "0.1.0", name = "ScreenR", long_about = None)]
 struct Args {
+    /// Generate video
+    #[clap(subcommand)]
+    output: Option<Generate>,
+
     /// Do not compress using pngquant
     #[clap(short, long)]
     no_compression: bool,
@@ -34,10 +38,6 @@ struct Args {
     #[clap(short, long, default_value_t = 30)]
     interval: u16,
 
-    /// Generate video
-    #[clap(subcommand)]
-    output: Option<Generate>,
-
     /// File prefix
     #[clap(short, long, default_value = "screen")]
     file_prefix: String,
@@ -50,6 +50,9 @@ enum Generate {
         /// Format: YYYY-MM-DD
         #[clap(short, long)]
         date: NaiveDate,
+        /// Retain images after generation
+        #[clap(short, long)]
+        retain_images: bool,
     },
 }
 
@@ -65,8 +68,11 @@ fn main() {
 
     if let Some(output) = &args.output {
         match output {
-            Generate::Generate { date } => {
-                generate_mp4(date, output_dir, file_prefix);
+            Generate::Generate {
+                date,
+                retain_images,
+            } => {
+                generate_mp4(date, output_dir, file_prefix, retain_images);
                 return;
             }
         }
@@ -85,18 +91,16 @@ fn main() {
     }
 }
 
-fn generate_mp4(date: &NaiveDate, output_dir: &Path, file_prefix: String) {
+fn generate_mp4(date: &NaiveDate, output_dir: &Path, file_prefix: String, retain_images: &bool) {
+    let file_glob = output_dir.join(format!("{}_{}*.png", file_prefix, date.format("%Y%m%d")));
     let _cmd = Command::new("ffmpeg")
+        .arg("-y")
         .arg("-framerate")
         .arg("2")
         .arg("-pattern_type")
         .arg("glob")
         .arg("-i")
-        .arg(format!(
-            "{}/screen_{}*.png",
-            output_dir.to_string_lossy(),
-            date.format("%Y%m%d")
-        ))
+        .arg(format!("{}", file_glob.to_string_lossy()))
         .arg("-c:v")
         .arg("libx265")
         .arg("-pix_fmt")
@@ -105,6 +109,21 @@ fn generate_mp4(date: &NaiveDate, output_dir: &Path, file_prefix: String) {
         .output()
         .expect("Failed to generate clip");
     trace!("{:?}", _cmd);
+    if !_cmd.status.success() {
+        error!("There was an error generating the clip, aborting.");
+        return;
+    }
+    if !retain_images {
+        debug!(
+            "Deleting all images matching {}",
+            file_glob.to_string_lossy()
+        );
+        let del_cmd = Command::new("rm")
+            .arg(file_glob.to_string_lossy().to_string())
+            .output()
+            .expect("Failed to delete files");
+        trace!("{:?}", del_cmd);
+    }
 }
 
 fn capture_displays(output_dir: &Path, compress: bool, single_image: bool, file_prefix: &str) {
